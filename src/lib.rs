@@ -71,9 +71,16 @@ pub mod grandiso {
             // Our first step is to pick a node in the motif graph and
             // tentatively assign it to every node in the host graph.
             let mut next_candidates = Vec::<HashMap<T, V>>::new();
-            for u in host.nodes() {
-                // TODO: Filter based upon degree of the node so we're not
-                // going to go crazy.
+            for u in host.nodes().filter(|n| {
+                (host.neighbors_directed(*n, Incoming).count()
+                    >= motif
+                        .neighbors_directed(*most_interesting_node, Incoming)
+                        .count())
+                    && (host.neighbors_directed(*n, Outgoing).count()
+                        >= motif
+                            .neighbors_directed(*most_interesting_node, Outgoing)
+                            .count())
+            }) {
                 let mut candidate = HashMap::new();
                 candidate.insert(*most_interesting_node, u);
                 next_candidates.push(candidate);
@@ -101,6 +108,7 @@ pub mod grandiso {
             // already-begun (i.e. nonempty) AS WELL AS incomplete (i.e. not
             // the same size as |V|-motif). In these cases, it is impossible
             // NOT to find a node that satisfies the below filtering.
+            // println!("{:#?}", candidate);
             let most_interesting_node = motif
                 .nodes()
                 .filter(|node| !candidate.contains_key(node))
@@ -118,6 +126,7 @@ pub mod grandiso {
                             .count();
                 })
                 .unwrap();
+            // println!("MIN: {:#?}", most_interesting_node);
 
             // The following is the analog of the following Python:
             // https://github.com/aplbrain/grandiso-networkx/blob/b5db289c7b8a681776c264014ec4f31c6431d37d/grandiso/__init__.py#L192
@@ -161,14 +170,21 @@ pub mod grandiso {
                 // If directed-edge-out:
                 if required_edges.len() == 1 {
                     let (_m_i_n, neighbor) = required_edges.first().unwrap();
-                    candidate_host_nodes =
-                        host.neighbors(*candidate.get(neighbor).unwrap()).collect();
+                    candidate_host_nodes = host
+                        .neighbors_directed(*candidate.get(neighbor).unwrap(), Incoming)
+                        .collect();
                 } else if required_edges_in.len() == 1 {
                     // if directed-edge-in:
                     let (neighbor, _m_i_n) = required_edges_in.first().unwrap();
-                    candidate_host_nodes =
-                        host.neighbors(*candidate.get(neighbor).unwrap()).collect();
+                    candidate_host_nodes_in = host
+                        .neighbors_directed(*candidate.get(neighbor).unwrap(), Outgoing)
+                        .collect();
                 }
+
+            // println!("RE:   {:#?}", required_edges);
+            // println!("REi:  {:#?}", required_edges_in);
+            // println!("CHN:  {:#?}", candidate_host_nodes);
+            // println!("CHNi: {:#?}", candidate_host_nodes_in);
             } else if required_edges.len() + required_edges_in.len() == 0 {
                 // py 253:
                 // If len(required_edges) is 0, something bad happened. Probably
@@ -186,6 +202,8 @@ pub mod grandiso {
                     most_interesting_node
                 );
             } else {
+                // println!("required_edges:\t{:#?}", required_edges);
+                // println!("required_edges_in:\t{:#?}", required_edges_in);
                 // This is the better case; it means we can easily whittle down
                 // the total number of valid nodes here by checking to see if
                 // they have enough valid mappings in the current candidate.
@@ -193,7 +211,7 @@ pub mod grandiso {
                 let mut candidate_host_nodes_set_in = HashSet::<V>::new();
                 required_edges.iter().for_each(|(_m_i_n, neighbor)| {
                     let candidate_nodes_from_this_edge =
-                        host.neighbors_directed(*candidate.get(neighbor).unwrap(), Outgoing);
+                        host.neighbors_directed(*candidate.get(neighbor).unwrap(), Incoming);
 
                     let candidate_nodes_from_this_edge_set: HashSet<V> =
                         candidate_nodes_from_this_edge.collect();
@@ -209,22 +227,29 @@ pub mod grandiso {
                         candidate_host_nodes_set
                             .extend(candidate_nodes_from_this_edge_set.iter().cloned());
                     } else {
-                        candidate_host_nodes_set.intersection(&candidate_nodes_from_this_edge_set);
+                        candidate_host_nodes_set = candidate_host_nodes_set
+                            .iter()
+                            .filter(|n| candidate_nodes_from_this_edge_set.contains(&n))
+                            .cloned()
+                            .collect();
                     }
                 });
                 // Same as above, for reverse edges:
                 required_edges_in.iter().for_each(|(neighbor, _m_i_n)| {
-                    let candidate_nodes_from_this_edge =
-                        host.neighbors_directed(*candidate.get(neighbor).unwrap(), Incoming);
+                    let candidate_nodes_from_this_edge_in =
+                        host.neighbors_directed(*candidate.get(neighbor).unwrap(), Outgoing);
 
-                    let candidate_nodes_from_this_edge_set: HashSet<V> =
-                        candidate_nodes_from_this_edge.collect();
+                    let candidate_nodes_from_this_edge_set_in: HashSet<V> =
+                        candidate_nodes_from_this_edge_in.collect();
                     if candidate_host_nodes_set_in.is_empty() {
                         candidate_host_nodes_set_in
-                            .extend(candidate_nodes_from_this_edge_set.iter().cloned());
+                            .extend(candidate_nodes_from_this_edge_set_in.iter().cloned());
                     } else {
-                        candidate_host_nodes_set_in
-                            .intersection(&candidate_nodes_from_this_edge_set);
+                        candidate_host_nodes_set_in = candidate_host_nodes_set_in
+                            .iter()
+                            .filter(|n| candidate_nodes_from_this_edge_set_in.contains(n))
+                            .cloned()
+                            .collect();
                     }
                 });
                 candidate_host_nodes = candidate_host_nodes_set.iter().cloned().collect();
@@ -261,10 +286,14 @@ pub mod grandiso {
                     } else {
                         // Verify that all motif edges exist.
                         motif.all_edges().all(|(u, v, _)| {
-                            return host.contains_edge(
+                            let contains: bool = host.contains_edge(
                                 *candidate.get(&u).unwrap(),
                                 *candidate.get(&v).unwrap(),
                             );
+                            if !contains {
+                                println!("R:  {:#?}", candidate);
+                            }
+                            return contains;
                         })
                     }
                 })
@@ -278,21 +307,19 @@ pub mod grandiso {
                 } else {
                     // Verify that all motif edges exist.
                     motif.all_edges().all(|(u, v, _)| {
-                        println!("MOTIF: {:#?}-{:#?}", u, v);
-                        println!(
-                            "HOST: {:#?}-{:#?}",
-                            candidate.get(&v).unwrap(),
-                            candidate.get(&u).unwrap(),
-                        );
-                        return host.contains_edge(
-                            *candidate.get(&v).unwrap(),
+                        let contains: bool = host.contains_edge(
                             *candidate.get(&u).unwrap(),
+                            *candidate.get(&v).unwrap(),
                         );
+                        if !contains {
+                            // println!("Ri: {:#?}", candidate);
+                        }
+                        return contains;
                     })
                 }
             }));
             // TODO: We ignore isomorphism here.
-            println!("{:#?}", new_monomorphism_candidates);
+            // println!("{:#?}", new_monomorphism_candidates);
             return new_monomorphism_candidates;
         }
     }
@@ -343,8 +370,11 @@ pub mod grandiso {
 
         q.push_back(initial_mapping);
 
+        let mut i = 0;
         // Now loop until the queue is empty.
         while !q.is_empty() {
+            println!("ITER {}", i);
+            i += 1;
             // Get a list of next valid candidate mappings:
             let next_mappings =
                 get_next_candidates(q.pop_front().unwrap(), &motif, &host, &interestingness);
@@ -353,10 +383,12 @@ pub mod grandiso {
                 if mapping.len() == motif.node_count() {
                     // Then this is a complete mapping; add it to the set of
                     // valid result mappings.
+                    println!("COMPLETE {:#?}", mapping);
                     r.push(mapping.clone());
                 } else {
                     // Otherwise, this is a valid partial mapping, and it
                     // shoudl be added back into the queue:
+                    println!("CONTINUE {:#?}", mapping);
                     q.push_back(mapping.clone());
                 }
             })
@@ -381,6 +413,48 @@ mod tests {
             1
         )
     }
+    #[test]
+    fn test_single_edge() {
+        let mut graphmap: DiGraphMap<i8, i8> = DiGraphMap::new();
+        graphmap.add_edge(0, 1, 2);
+
+        let mut host: DiGraphMap<i8, i8> = DiGraphMap::new();
+        host.add_edge(0, 1, 2);
+
+        assert_eq!(
+            grandiso::find_motifs(graphmap.clone(), host.clone()).len(),
+            1
+        )
+    }
+
+    #[test]
+    fn test_single_edge_with_reverse_name() {
+        let mut graphmap: DiGraphMap<i8, i8> = DiGraphMap::new();
+        graphmap.add_edge(0, 1, 2);
+
+        let mut host: DiGraphMap<i8, i8> = DiGraphMap::new();
+        host.add_edge(1, 0, 1);
+
+        assert_eq!(
+            grandiso::find_motifs(graphmap.clone(), host.clone()).len(),
+            1
+        )
+    }
+
+    #[test]
+    fn test_one_motif_edge_with_two_edges() {
+        let mut graphmap: DiGraphMap<i8, i8> = DiGraphMap::new();
+        graphmap.add_edge(0, 1, 2);
+
+        let mut host: DiGraphMap<i8, i8> = DiGraphMap::new();
+        host.add_edge(0, 1, 2);
+        host.add_edge(1, 0, 2);
+
+        assert_eq!(
+            grandiso::find_motifs(graphmap.clone(), host.clone()).len(),
+            2
+        )
+    }
 
     #[test]
     fn test_two_edges() {
@@ -396,10 +470,10 @@ mod tests {
 
     #[test]
     fn test_directed_triangles() {
-        let mut graphmap: DiGraphMap<&str, &str> = DiGraphMap::new();
-        graphmap.add_edge("0", "1", "3");
-        graphmap.add_edge("1", "2", "3");
-        graphmap.add_edge("2", "0", "3");
+        let mut graphmap: DiGraphMap<i8, &str> = DiGraphMap::new();
+        graphmap.add_edge(0, 1, "3");
+        graphmap.add_edge(1, 2, "3");
+        graphmap.add_edge(2, 0, "3");
         let mut graphmap_host: DiGraphMap<&str, &str> = DiGraphMap::new();
         graphmap_host.add_edge("A", "B", "3");
         graphmap_host.add_edge("B", "C", "3");
@@ -407,7 +481,7 @@ mod tests {
 
         let results = grandiso::find_motifs(graphmap.clone(), graphmap_host.clone());
 
-        assert_eq!(results.len(), 3)
+        assert_eq!(results.len(), 6)
     }
 
     #[test]
