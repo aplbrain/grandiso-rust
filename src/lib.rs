@@ -290,9 +290,7 @@ pub mod grandiso {
                                 *candidate.get(&u).unwrap(),
                                 *candidate.get(&v).unwrap(),
                             );
-                            if !contains {
-                                println!("R:  {:#?}", candidate);
-                            }
+                            if !contains {}
                             return contains;
                         })
                     }
@@ -311,9 +309,7 @@ pub mod grandiso {
                             *candidate.get(&u).unwrap(),
                             *candidate.get(&v).unwrap(),
                         );
-                        if !contains {
-                            // println!("Ri: {:#?}", candidate);
-                        }
+                        if !contains {}
                         return contains;
                     })
                 }
@@ -370,11 +366,8 @@ pub mod grandiso {
 
         q.push_back(initial_mapping);
 
-        let mut i = 0;
         // Now loop until the queue is empty.
         while !q.is_empty() {
-            println!("ITER {}", i);
-            i += 1;
             // Get a list of next valid candidate mappings:
             let next_mappings =
                 get_next_candidates(q.pop_front().unwrap(), &motif, &host, &interestingness);
@@ -383,12 +376,10 @@ pub mod grandiso {
                 if mapping.len() == motif.node_count() {
                     // Then this is a complete mapping; add it to the set of
                     // valid result mappings.
-                    println!("COMPLETE {:#?}", mapping);
                     r.push(mapping.clone());
                 } else {
                     // Otherwise, this is a valid partial mapping, and it
                     // shoudl be added back into the queue:
-                    println!("CONTINUE {:#?}", mapping);
                     q.push_back(mapping.clone());
                 }
             })
